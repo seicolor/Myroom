@@ -199,10 +199,15 @@
   </div>
 </div>
 
+<!--
+  three.js は r186(0.186.1)に固定。バージョンを上げるときは下の2行の番号だけを揃えて変える。
+  レンダラーは WebGLRenderer、独自シェーダーは GLSL(ShaderMaterial)。
+  TSL は WebGPURenderer 用なので、この1ファイル構成では使っていない。
+-->
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
 } }
 </script>
 <script type="module">
@@ -226,7 +231,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // r182 で PCFSoftShadowMap は廃止
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -255,7 +260,49 @@ sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11, near: 1, far: 50 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.02;
+sun.shadow.radius = 3;
 scene.add(sun);
+
+// ---------- sky (GLSL) ----------
+// 窓の外に見える空。ウォークスルー時だけ表示し、カメラに追従させる。
+const skyUniforms = {
+  uTop: { value: new THREE.Color(0x5b8ec8) },
+  uHorizon: { value: new THREE.Color(0xe3ebf2) },
+  uGround: { value: new THREE.Color(0x9a9ea2) },
+  uSunDir: { value: sun.position.clone().normalize() },
+};
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(90, 32, 16),
+  new THREE.ShaderMaterial({
+    uniforms: skyUniforms,
+    side: THREE.BackSide,
+    depthWrite: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uTop;
+      uniform vec3 uHorizon;
+      uniform vec3 uGround;
+      uniform vec3 uSunDir;
+      varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        vec3 col = mix(uHorizon, uTop, pow(clamp(d.y * 1.5, 0.0, 1.0), 0.7));
+        float s = max(dot(d, uSunDir), 0.0);
+        col += vec3(1.0, 0.92, 0.75) * (pow(s, 400.0) * 1.5 + pow(s, 8.0) * 0.2);
+        col = mix(col, uGround, smoothstep(0.0, -0.08, d.y));   // 地平線より下は街の地面
+        gl_FragColor = vec4(col, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  }),
+);
+sky.visible = false;
+sky.renderOrder = -1;
+scene.add(sky);
 
 // ---------- textures ----------
 function rng(seed) {
@@ -710,6 +757,7 @@ function setMode(m) {
   controls.enabled = !w;
   labelGroup.visible = !w && document.getElementById('opt-labels').checked;
   guides.visible = !w;
+  sky.visible = w;
   if (w) {
     savedOrbit = { pos: camera.position.clone(), target: controls.target.clone() };
     camera.fov = 70;
@@ -778,9 +826,11 @@ for (const id of ROOM_LIST) {
 if (narrow) document.getElementById('rooms').open = false;
 
 // ---------- loop ----------
-const clock = new THREE.Clock();
-function tick() {
-  const dt = Math.min(clock.getDelta(), 0.05);
+const timer = new THREE.Timer();   // r183 で Clock は非推奨、Timer を使う
+timer.connect(document);
+function tick(time) {
+  timer.update(time);
+  const dt = Math.min(timer.getDelta(), 0.05);
   if (walk.on) {
     const k = walk.keys;
     if (k.has('l')) walk.yaw -= 1.8 * dt;
@@ -793,6 +843,7 @@ function tick() {
       if (!blocked(walk.x, nz)) walk.z = nz;
     }
     setWalkCamera();
+    sky.position.copy(camera.position);
   } else {
     if (anim) {
       const u = Math.min((performance.now() - anim.t0) / anim.dur, 1);
@@ -807,7 +858,7 @@ function tick() {
   labelRenderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
-tick();
+requestAnimationFrame(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

@@ -2,6 +2,13 @@
 
 マンション(E type / 3LDK)の平面図・展開図をもとに、部屋を three.js で 3D 再現したものです。
 
+## 技術構成
+
+- **three.js r186(0.186.1)に固定**:`index.html` の importmap で CDN(jsDelivr)の版番号を指定しています。更新するときは importmap の2行の番号を揃えて変えます。
+- **WebGLRenderer + GLSL**:標準マテリアルに加えて、窓の外の空を GLSL の `ShaderMaterial` で描いています。TSL は WebGPURenderer 向けなので、この構成では使っていません。
+- **ES6 モジュール**:`<script type="module">` と importmap で読み込みます。ビルドツールは使いません。
+- **HTML 1ファイル**:CSS・JS・テクスチャ(Canvas で生成)をすべて `index.html` に入れています。
+
 ## 見かた
 
 ビルド不要です。静的サーバで `index.html` を開いてください(three.js は CDN から読み込みます)。
